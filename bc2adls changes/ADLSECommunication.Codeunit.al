@@ -99,7 +99,7 @@ codeunit 82562 "ADLSE Communication"
         exit(Content1 <> Content2);
     end;
 
-    local procedure CreateDataBlob()
+    procedure CreateDataBlob()
     var
         ADLSEUtil: Codeunit "ADLSE Util";
         ADLSEGen2Util: Codeunit "ADLSE Gen 2 Util";
@@ -110,6 +110,7 @@ codeunit 82562 "ADLSE Communication"
         if DataBlobPath <> '' then
             // already created blob
             exit;
+
         FileIdentifer := CreateGuid();
         DataBlobPath := StrSubstNo('/deltas/%1/%2.csv', EntityName, ADLSEUtil.ToText(FileIdentifer));
         ADLSEGen2Util.CreateDataBlob(GetBaseUrl() + DataBlobPath, ADLSECredentials);
@@ -173,7 +174,7 @@ codeunit 82562 "ADLSE Communication"
         exit(MaxCapacityOfTextBuilder);
     end;
 
-    local procedure FlushPayload()
+    procedure FlushPayload()
     var
         ADLSEGen2Util: Codeunit "ADLSE Gen 2 Util";
         ADLSEExecution: Codeunit "ADLSE Execution";
@@ -264,4 +265,14 @@ codeunit 82562 "ADLSE Communication"
         ADLSEGen2Util.ReleaseBlob(BlobPath, ADLSECredentials, LeaseID);
     end;
 
+    procedure AppendPayload(PayloadAppend: TextBuilder)
+    begin
+        Payload := PayloadAppend;
+    end;
+
+    procedure Flush()
+    begin
+        DataBlobPath := '';
+        Clear(DataBlobBlockIDs);
+    end;
 }

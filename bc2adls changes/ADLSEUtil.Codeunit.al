@@ -9,6 +9,7 @@ codeunit 82564 "ADLSE Util"
         AlphabetsUpperTxt: Label 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
         NumeralsTxt: Label '1234567890';
         FieldTypeNotSupportedErr: Label 'The field %1 of type %2 is not supported.', Comment = '%1 = field name, %2 = field type';
+        TimestampAscendingSortViewTxt: Label 'Sorting(Timestamp) Order(Ascending)', Locked = true;
 
     procedure ToText(GuidValue: Guid): Text
     begin
@@ -157,6 +158,7 @@ codeunit 82564 "ADLSE Util"
         Result := ResultBuilder.ToText();
     end;
 
+    [TryFunction]
     procedure CheckFieldTypeForExport(Fld: Record Field)
     begin
         case Fld.Type of
@@ -422,6 +424,112 @@ codeunit 82564 "ADLSE Util"
             if Obj.Get(PropertyName, PropertyToken) then
                 if PropertyToken.AsValue().AsText() = PropertyValue then
                     exit(true);
+        end;
+    end;
+
+    procedure WriteHeadersToCsvStream(var TempBlob: Codeunit "Temp Blob"; var Payload: TextBuilder; RecRef: RecordRef; var SchemaJson: JsonArray)
+    var
+        TableJson: JsonArray;
+        RecordJson: JsonArray;
+        FieldJson: JsonObject;
+        JsonToken: JsonToken;
+        InStr: InStream;
+        QuoteChars: array[1000] of Boolean;
+        FieldTypeAsText: Text;
+        FieldIndex: Integer;
+        CR: Text[1];
+        FieldName: Text;
+        FieldNumber: Integer;
+        CsvSeparator: Text[1];
+    begin
+        Clear(Payload);
+
+        CsvSeparator := ',';
+
+        CR[1] := 10;
+        // Schema - Headers in the sheet
+        TempBlob.CreateInStream(InStr, TextEncoding::UTF8);
+        SchemaJson.ReadFrom(InStr);
+        for FieldIndex := 0 to SchemaJson.Count() - 1 do begin
+            Clear(FieldName);
+            Clear(FieldNumber);
+            SchemaJson.Get(FieldIndex, JsonToken);
+            FieldJson := JsonToken.AsObject();
+            FieldJson.Get('DataType', JsonToken);
+            FieldTypeAsText := JsonToken.AsValue().AsText();
+            if FieldIndex < ArrayLen(QuoteChars) then
+                QuoteChars[FieldIndex + 1] := FieldTypeAsText in ['Text', 'Code'];
+            FieldJson.Get('FieldName', JsonToken);
+            FieldName := JsonToken.AsValue().AsText();
+            FieldName := DelChr(FieldName, '=', '.');
+            FieldJson.Get('FieldNumber', JsonToken);
+            FieldNumber := JsonToken.AsValue().AsInteger();
+
+            If FieldIndex = 0 then
+                Payload.Append(GetDataLakeCompliantFieldName(FieldName, FieldNumber))
+            else
+                Payload.Append(CsvSeparator + GetDataLakeCompliantFieldName(FieldName, FieldNumber));
+        end;
+        Payload.Append(StrSubstNo(',%1', 'timestamp-0')); //timestamp field
+
+        if IsTablePerCompany(RecRef.Number) then
+            Payload.Append(StrSubstNo(',%1', '$Company'));
+
+        Payload.Append(CR);
+    end;
+
+    procedure WriteLinesToCsvStream(var TempBlob: Codeunit "Temp Blob"; var Payload: TextBuilder; RecRef: RecordRef; var SchemaJson: JsonArray)
+    var
+        TableJson: JsonArray;
+        RecordJson: JsonArray;
+        FieldJson: JsonObject;
+        JsonToken: JsonToken;
+        InStr: InStream;
+        QuoteChars: array[1000] of Boolean;
+        QuoteTxt: Text[1];
+        RecordNo: Integer;
+        FieldIndex: Integer;
+        FieldNo: Integer;
+        Line: TextBuilder;
+        CR: Text[1];
+        TimeStampField: FieldRef;
+        CsvSeparator: Text[1];
+    begin
+        CsvSeparator := ',';
+        // Data - Rows in the sheet
+        TempBlob.CreateInStream(InStr, TextEncoding::UTF8);
+        TableJson.ReadFrom(InStr);
+        for RecordNo := 0 to TableJson.Count() - 1 do begin
+            Clear(Line);
+            TableJson.Get(RecordNo, JsonToken);
+            RecordJson := JsonToken.AsArray();
+            for FieldIndex := 0 to SchemaJson.Count() - 1 do begin
+                SchemaJson.Get(FieldIndex, JsonToken);
+                FieldJson := JsonToken.AsObject();
+                FieldJson.Get('FieldNumber', JsonToken);
+                FieldNo := JsonToken.AsValue().AsInteger();
+                RecordJson.Get(FieldIndex, JsonToken);
+                FieldJson := JsonToken.AsObject();
+                FieldJson.Get(Format(FieldNo), JsonToken);
+                if QuoteChars[FieldIndex + 1] then
+                    QuoteTxt := '"'
+                else
+                    QuoteTxt := '';
+                If FieldIndex = 0 then
+                    Line.Append(QuoteTxt + JsonToken.AsValue().AsText() + QuoteTxt)
+                else
+                    Line.Append(CsvSeparator + QuoteTxt + JsonToken.AsValue().AsText() + QuoteTxt);
+            end;
+
+            RecRef.SetView(TimestampAscendingSortViewTxt); //Timestampfield
+            TimeStampField := RecRef.Field(0); // 0 is the TimeStamp field
+            Line.Append(StrSubstNo(',%1', TimeStampField.Value()));
+
+            if IsTablePerCompany(RecRef.Number) then
+                Line.Append(StrSubstNo(',%1', ConvertStringToText(CompanyName())));
+
+            Payload.Append(Line.ToText() + CR);
+
         end;
     end;
 }
